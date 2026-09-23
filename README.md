@@ -54,10 +54,10 @@ python scripts/init_db.py
 pytest -q
 ```
 
-OpenSpec 规约校验（安装 `@fission-ai/openspec` 后）：
+OpenSpec 规约校验（归档前已执行，安装 `@fission-ai/openspec` 后可在归档前的 change 目录执行）：
 
 ```powershell
 openspec validate add-auth-rbac-class-knowledge --strict
 ```
 
-验收证据见 `evidence/verification.md`；实现范围与四件套已归档在 `openspec/changes/archive/2026-09-23-add-auth-rbac-class-knowledge/`，当前基线在 `openspec/specs/auth-upload/spec.md`。
+当前活动 change 已归档，因此 `openspec list` 为空；实现范围与四件套已归档在 `openspec/changes/archive/2026-09-23-add-auth-rbac-class-knowledge/`，当前基线在 `openspec/specs/auth-upload/spec.md`。验收证据见 `evidence/verification.md`。
