@@ -1,0 +1,13 @@
+{% extends 'base.html' %}
+{% block title %}登录 · CampusClaw{% endblock %}
+{% block body %}
+<main class="card" style="max-width:420px;margin:5rem auto">
+  <h1>CampusClaw</h1><p>认证、班级隔离与知识库入库（迭代 1）</p>
+  {% with messages = get_flashed_messages() %}{% for message in messages %}<div class="flash">{{ message }}</div>{% endfor %}{% endwith %}
+  <form method="post">
+    <label>用户名<input name="username" required autocomplete="username"></label>
+    <label>密码<input name="password" type="password" required autocomplete="current-password"></label>
+    <button type="submit">登录</button>
+  </form>
+</main>
+{% endblock %}

@@ -1,0 +1,11 @@
+{% extends 'base.html' %}
+{% block title %}材料 · CampusClaw{% endblock %}
+{% block body %}
+<header><div><strong>CampusClaw</strong> · {{ '教师' if g.user['role'] == 'teacher' else '学生' }} · 班级 {{ g.user['class_id'] }}</div><form method="post" action="{{ url_for('auth.logout') }}"><button>退出登录</button></form></header>
+{% with messages = get_flashed_messages() %}{% for message in messages %}<div class="flash">{{ message }}</div>{% endfor %}{% endwith %}
+<h1>本班教学材料</h1>
+{% if g.user['role'] == 'teacher' %}
+<section class="card"><h2>上传材料</h2><form method="post" action="{{ url_for('materials.upload') }}" enctype="multipart/form-data"><input type="file" name="file" accept=".txt,.md" required><button type="submit">上传并入库</button></form></section>
+{% endif %}
+<table><thead><tr><th>标题</th><th>上传者</th><th>时间</th></tr></thead><tbody>{% for material in materials %}<tr><td>{{ material['title'] }}</td><td>{{ material['uploaded_by'] }}</td><td>{{ material['created_at'] }}</td></tr>{% else %}<tr><td colspan="3">暂无材料</td></tr>{% endfor %}</tbody></table>
+{% endblock %}
