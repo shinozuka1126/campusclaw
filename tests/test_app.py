@@ -58,6 +58,34 @@ def test_student_can_download_own_class_material(client):
     assert "A 班" in response.get_data(as_text=True)
 
 
+def test_knowledge_search_returns_provenance_and_enforces_class_scope(client):
+    assert login(client, "student_a1", "StudentA1!2026").status_code == 302
+    response = client.get("/api/knowledge/search?q=预置&limit=5")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["total"] == 1
+    result = payload["results"][0]
+    assert result["material_title"] == "A 班欢迎材料"
+    assert result["material_id"] == 1
+    assert result["snippet"]
+    assert result["start_offset"] < result["end_offset"]
+    assert result["source_url"].endswith("/api/materials/1")
+    assert result["download_url"].endswith("/materials/1/download")
+
+    cross_class = client.get("/api/knowledge/search?q=B%20%E7%8F%AD&class_id=2")
+    assert cross_class.status_code == 200
+    assert cross_class.get_json()["results"] == []
+    assert "B 班" not in cross_class.get_data(as_text=True)
+
+
+def test_knowledge_search_requires_valid_query(client):
+    assert client.get("/api/knowledge/search?q=预置").status_code == 401
+    assert login(client, "student_a1", "StudentA1!2026").status_code == 302
+    assert client.get("/api/knowledge/search?q=").status_code == 400
+    assert client.get("/api/knowledge/search?q=预置&limit=21").status_code == 400
+    assert client.get("/api/knowledge/search?q=不存在的词").get_json()["results"] == []
+
+
 def test_teacher_upload_writes_material_and_knowledge_entry(client, app):
     assert login(client, "teacher_a", "TeacherA!2026").status_code == 302
     response = client.post("/api/materials/upload", data={"file": (io.BytesIO("新课内容".encode()), "new-lesson.md")})
@@ -66,6 +94,30 @@ def test_teacher_upload_writes_material_and_knowledge_entry(client, app):
         row = db.execute("SELECT m.title, m.class_id, k.body_text FROM materials m JOIN knowledge_entries k ON k.material_id=m.id WHERE m.title='new-lesson'").fetchone()
     assert row == ("new-lesson", 1, "新课内容")
     assert client.get("/api/materials").get_json()["materials"][0]["title"] == "new-lesson"
+    result = client.get("/api/knowledge/search?q=新课内容").get_json()["results"]
+    assert result[0]["material_title"] == "new-lesson"
+    assert result[0]["start_offset"] == 0
+    assert result[0]["end_offset"] == len("新课内容")
+
+
+def test_knowledge_chunks_are_idempotently_backfilled(app):
+    import sqlite3
+
+    with sqlite3.connect(app.config["DATABASE"]) as db:
+        first = db.execute("SELECT COUNT(*) FROM knowledge_chunks").fetchone()[0]
+    from app import create_app
+
+    create_app(
+        {
+            "TESTING": True,
+            "SECRET_KEY": "test-secret-key",
+            "DATABASE": app.config["DATABASE"],
+            "UPLOAD_FOLDER": app.config["UPLOAD_FOLDER"],
+        }
+    )
+    with sqlite3.connect(app.config["DATABASE"]) as db:
+        second = db.execute("SELECT COUNT(*) FROM knowledge_chunks").fetchone()[0]
+    assert first == second
 
 
 def test_invalid_upload_leaves_no_db_row_or_file(client, app):

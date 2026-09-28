@@ -1,16 +1,16 @@
-# CampusClaw 迭代 1：认证、授权与知识库入库
+# CampusClaw 迭代 2：班级限定知识库检索与内容溯源
 
 ## 价值
 
-为中小学教研团队提供按班级隔离的教学材料管理底座。
+为中小学教研团队提供按班级隔离的教学材料管理和可核验检索底座。
 
 ## 场景
 
-教师登录后上传本班 `.txt` / `.md` 材料，系统解析后写入知识库；学生只能查看本班材料。
+教师登录后上传本班 `.txt` / `.md` 材料，系统解析、切分后写入知识库；本班教师和学生可以检索本班内容并追溯到原始材料。
 
 ## 不做
 
-本迭代不做检索问答、对话助手、作业提交与批改、注册/找回密码、SSO、多租户和生产高可用。
+本迭代不做生成式检索问答、对话助手、作业提交与批改、注册/找回密码、SSO、多租户和生产高可用。
 
 ## 快速启动
 
@@ -21,6 +21,14 @@ docker compose up --build
 ```
 
 浏览器访问 <http://localhost:8080/login>，健康检查访问 <http://localhost:8080/health>。
+
+登录后，材料页的检索框只搜索当前用户所属班级。API 调用示例：
+
+```powershell
+curl.exe -b cookies.txt "http://localhost:8080/api/knowledge/search?q=项目&limit=10"
+```
+
+每个命中包含 `material_id`、`material_title`、`chunk_id`、正文字符区间、片段、材料详情 URL 和下载 URL。服务端从会话读取班级，忽略请求中的 `class_id`；本期使用 SQLite 片段索引，不需要单独启动向量数据库。
 
 预置账号：
 
@@ -60,4 +68,4 @@ OpenSpec 规约校验（归档前已执行，安装 `@fission-ai/openspec` 后�
 openspec validate add-auth-rbac-class-knowledge --strict
 ```
 
-当前活动 change 已归档，因此 `openspec list` 为空；实现范围与四件套已归档在 `openspec/changes/archive/2026-09-23-add-auth-rbac-class-knowledge/`，当前基线在 `openspec/specs/auth-upload/spec.md`。验收证据见 `evidence/verification.md`。
+第四课活动 change 为 `add-class-scoped-knowledge-retrieval`，描述和实现任务在 `openspec/changes/add-class-scoped-knowledge-retrieval/`；上一课四件套已归档在 `openspec/changes/archive/2026-09-23-add-auth-rbac-class-knowledge/`。验收证据见 `evidence/verification.md`。

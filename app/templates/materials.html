@@ -4,6 +4,25 @@
 <header><div><strong>CampusClaw</strong> · {{ '教师' if g.user['role'] == 'teacher' else '学生' }} · 班级 {{ g.user['class_id'] }}</div><form method="post" action="{{ url_for('auth.logout') }}"><button>退出登录</button></form></header>
 {% with messages = get_flashed_messages() %}{% for message in messages %}<div class="flash">{{ message }}</div>{% endfor %}{% endwith %}
 <h1>本班教学材料</h1>
+<section class="card">
+  <h2>本班知识库检索</h2>
+  <form method="get" action="{{ url_for('materials.list_materials') }}">
+    <label>检索词<input type="text" name="q" value="{{ request.args.get('q', '') }}" maxlength="200" placeholder="输入材料中的词语"></label>
+    <button type="submit">检索</button>
+  </form>
+  {% if search_results is defined %}
+    {% if search_results %}
+      <ul>
+      {% for result in search_results %}
+        <li><strong>{{ result['material_title'] }}</strong>：{{ result['snippet'] }}
+          <a href="{{ result['source_url'] }}">查看来源</a>
+          <a href="{{ result['download_url'] }}">下载材料</a>
+        </li>
+      {% endfor %}
+      </ul>
+    {% else %}<p>没有找到本班匹配内容。</p>{% endif %}
+  {% endif %}
+</section>
 {% if g.user['role'] == 'teacher' %}
 <section class="card"><h2>上传材料</h2><form method="post" action="{{ url_for('materials.upload') }}" enctype="multipart/form-data"><input type="file" name="file" accept=".txt,.md" required><button type="submit">上传并入库</button></form></section>
 {% endif %}

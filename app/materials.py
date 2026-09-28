@@ -8,7 +8,7 @@ from flask import Blueprint, current_app, flash, g, jsonify, redirect, render_te
 from werkzeug.utils import secure_filename
 
 from .auth import login_required
-from .db import get_db, get_material, list_materials as db_list_materials
+from .db import get_db, get_material, list_materials as db_list_materials, insert_knowledge_chunks, search_knowledge
 
 bp = Blueprint("materials", __name__)
 ALLOWED_EXTENSIONS = {"txt", "md"}
@@ -22,7 +22,11 @@ def _json_requested() -> bool:
 @login_required
 def list_materials():
     rows = _list_for_user()
-    return render_template("materials.html", materials=rows)
+    query = request.args.get("q", "").strip()
+    search_results = None
+    if query:
+        search_results = _search_results(query, 10)
+    return render_template("materials.html", materials=rows, search_results=search_results)
 
 
 @bp.get("/api/materials")
@@ -30,6 +34,56 @@ def list_materials():
 def api_list_materials():
     rows = _list_for_user()
     return jsonify(materials=[dict(row) for row in rows])
+
+
+@bp.get("/api/knowledge/search")
+@login_required
+def api_search_knowledge():
+    query = request.args.get("q", "").strip()
+    if not query or len(query) > 200:
+        return jsonify(error="query must be 1-200 characters"), 400
+    raw_limit = request.args.get("limit", "10")
+    try:
+        limit = int(raw_limit)
+    except (TypeError, ValueError):
+        return jsonify(error="limit must be an integer between 1 and 20"), 400
+    if not 1 <= limit <= 20:
+        return jsonify(error="limit must be an integer between 1 and 20"), 400
+    try:
+        results = _search_results(query, limit)
+        return jsonify(query=query, results=results, total=len(results))
+    except Exception:
+        current_app.logger.exception("knowledge search failed")
+        return jsonify(error="knowledge search unavailable"), 500
+
+
+def _search_results(query: str, limit: int):
+    rows = search_knowledge(g.user["class_id"], query, limit)
+    results = []
+    for row in rows:
+        content = row["content"]
+        folded_content = content.casefold()
+        folded_query = query.casefold()
+        match_at = folded_content.find(folded_query)
+        if match_at < 0:
+            match_at = 0
+        start = max(0, match_at - 100)
+        end = min(len(content), match_at + len(query) + 180)
+        results.append(
+            {
+                "chunk_id": row["chunk_id"],
+                "material_id": row["material_id"],
+                "material_title": row["material_title"],
+                "chunk_index": row["chunk_index"],
+                "snippet": content[start:end],
+                "start_offset": row["start_offset"],
+                "end_offset": row["end_offset"],
+                "source_url": url_for("materials.api_material", material_id=row["material_id"]),
+                "download_url": url_for("materials.download", material_id=row["material_id"]),
+                "created_at": row["created_at"],
+            }
+        )
+    return results
 
 
 def _list_for_user():
@@ -95,9 +149,16 @@ def upload():
             "INSERT INTO materials(title, class_id, file_path, uploaded_by) VALUES (?, ?, ?, ?)",
             (title, g.user["class_id"], str(relative_path), g.user["id"]),
         )
-        db.execute(
+        entry_cur = db.execute(
             "INSERT INTO knowledge_entries(material_id, class_id, body_text) VALUES (?, ?, ?)",
             (cur.lastrowid, g.user["class_id"], text),
+        )
+        insert_knowledge_chunks(
+            db,
+            entry_id=entry_cur.lastrowid,
+            material_id=cur.lastrowid,
+            class_id=g.user["class_id"],
+            body_text=text,
         )
         db.commit()
     except Exception:
