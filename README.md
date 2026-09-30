@@ -1,16 +1,16 @@
-# CampusClaw 迭代 2：班级限定知识库检索与内容溯源
+# CampusClaw 迭代 4：班级限定知识库检索与 AI 问答
 
 ## 价值
 
-为中小学教研团队提供按班级隔离的教学材料管理和可核验检索底座。
+为中小学教研团队提供按班级隔离、可核验并支持 AI 问答的教学材料底座。
 
 ## 场景
 
-教师登录后上传本班 `.txt` / `.md` 材料，系统解析、切分后写入知识库；本班教师和学生可以检索本班内容并追溯到原始材料。
+教师登录后上传本班 `.txt` / `.md` 材料，系统解析、切分后写入知识库；本班教师和学生可以检索本班内容、追溯原始材料，并在知识问答页获得带 `[1]`、`[2]` 来源标记的简短回答。
 
 ## 不做
 
-本迭代不做生成式检索问答、对话助手、作业提交与批改、注册/找回密码、SSO、多租户和生产高可用。
+本项目不做多轮对话、作业提交与批改、注册/找回密码、SSO、多租户和生产高可用。
 
 ## 快速启动
 
@@ -29,6 +29,27 @@ curl.exe -b cookies.txt "http://localhost:8080/api/knowledge/search?q=项目&lim
 ```
 
 每个命中包含 `material_id`、`material_title`、`chunk_id`、正文字符区间、片段、材料详情 URL 和下载 URL。服务端从会话读取班级，忽略请求中的 `class_id`；本期使用 SQLite 片段索引，不需要单独启动向量数据库。
+
+## 知识问答
+
+教师可先在材料页上传 `examples/science-a.md`，然后打开“知识问答”。每个问题先在当前用户所属班级内做 BM25 + TF-IDF 稀疏混合检索，最多选取 4 个切片交给 DeepSeek；回答必须引用 `[1]`、`[2]` 等编号，页面同时展示切片正文、字符区间、材料详情和下载链接。没有命中时返回“本班资料中没有找到相关内容”，不会调用模型。
+
+在本机 `.env` 中填写服务端密钥（不要提交 `.env`）：
+
+```dotenv
+DEEPSEEK_API_KEY=你的本机密钥
+DEEPSEEK_MODEL=deepseek-chat
+DEEPSEEK_BASE_URL=https://api.deepseek.com/chat/completions
+```
+
+也可以使用已登录会话直接调用接口：
+
+```powershell
+curl.exe -b cookies.txt "http://localhost:8080/api/knowledge/retrieve?q=磁铁&limit=4"
+curl.exe -b cookies.txt -H "Content-Type: application/json" -d '{"question":"磁铁能吸木块吗？"}' http://localhost:8080/api/knowledge/ask
+```
+
+模型只会收到问题和当前班级的原文切片，不会收到 Cookie、Bearer token、用户名或密码。未配置密钥、上游超时、无效引用和供应商故障都会返回通用错误，不回显密钥或供应商原始响应。
 
 ## Bearer token 演示
 
@@ -79,7 +100,7 @@ pytest -q
 OpenSpec 规约校验（归档前已执行，安装 `@fission-ai/openspec` 后可在归档前的 change 目录执行）：
 
 ```powershell
-openspec validate add-auth-rbac-class-knowledge --strict
+openspec validate add-class-knowledge-qa --strict
 ```
 
-第四课活动 change 为 `add-class-scoped-knowledge-retrieval`，描述和实现任务在 `openspec/changes/add-class-scoped-knowledge-retrieval/`；上一课四件套已归档在 `openspec/changes/archive/2026-09-23-add-auth-rbac-class-knowledge/`。验收证据见 `evidence/verification.md`。
+第四课活动 change 为 `add-class-knowledge-qa`，描述和实现任务在 `openspec/changes/add-class-knowledge-qa/`；上一课四件套已归档在 `openspec/changes/archive/2026-09-23-add-auth-rbac-class-knowledge/`。验收证据见 `evidence/verification.md`。

@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 {% block title %}材料 · CampusClaw{% endblock %}
 {% block body %}
-<header><div><strong>CampusClaw</strong> · {{ '教师' if g.user['role'] == 'teacher' else '学生' }} · 班级 {{ g.user['class_id'] }}</div><form method="post" action="{{ url_for('auth.logout') }}"><button>退出登录</button></form></header>
+<header><div><strong>CampusClaw</strong> · {{ '教师' if g.user['role'] == 'teacher' else '学生' }} · 班级 {{ g.user['class_id'] }} · <a href="{{ url_for('qa.knowledge_page') }}">知识问答</a></div><form method="post" action="{{ url_for('auth.logout') }}"><button>退出登录</button></form></header>
 {% with messages = get_flashed_messages() %}{% for message in messages %}<div class="flash">{{ message }}</div>{% endfor %}{% endwith %}
 <h1>本班教学材料</h1>
 <section class="card">

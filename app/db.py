@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import sqlite3
 import hashlib
+import math
+import re
 from pathlib import Path
 
 from flask import current_app, g
@@ -231,3 +233,114 @@ def search_knowledge(class_id: int, query: str, limit: int):
         "ORDER BY m.created_at DESC, c.chunk_index ASC, c.id ASC LIMIT ?",
         (class_id, like, like, limit),
     ).fetchall()
+
+
+_ASCII_TERM_RE = re.compile(r"[A-Za-z0-9_]+")
+_CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+
+
+def _knowledge_terms(text: str) -> list[str]:
+    """Return terms suitable for a small, dependency-free hybrid index.
+
+    ASCII words are lower-cased.  Chinese text is represented by characters and
+    overlapping bigrams so a short question can match natural Chinese phrases
+    without requiring an external tokenizer.
+    """
+    terms: list[str] = [match.group(0).casefold() for match in _ASCII_TERM_RE.finditer(text)]
+    cjk_run: list[str] = []
+    for char in text:
+        if _CJK_RE.fullmatch(char):
+            cjk_run.append(char)
+            continue
+        if cjk_run:
+            terms.extend("".join(cjk_run[i : i + 2]) for i in range(len(cjk_run) - 1))
+            cjk_run = []
+    if cjk_run:
+        terms.extend("".join(cjk_run[i : i + 2]) for i in range(len(cjk_run) - 1))
+    return terms
+
+
+def hybrid_search_knowledge(class_id: int, query: str, limit: int = 4) -> list[dict]:
+    """Retrieve class-scoped chunks using BM25 and sparse TF-IDF fusion.
+
+    The project deliberately keeps this index dependency-free: the corpus is
+    small and each request reads only the caller's class rows.  Returning plain
+    dictionaries makes the score/provenance payload straightforward for API
+    routes while retaining all source offsets.
+    """
+    limit = max(1, min(int(limit), 4))
+    query_terms = _knowledge_terms(query or "")
+    if not query_terms:
+        return []
+    rows = get_db().execute(
+        "SELECT c.id AS chunk_id, c.material_id, c.chunk_index, c.content, "
+        "c.start_offset, c.end_offset, c.created_at, m.title AS material_title "
+        "FROM knowledge_chunks c JOIN materials m ON m.id = c.material_id "
+        "WHERE c.class_id = ? AND m.class_id = c.class_id "
+        "ORDER BY m.created_at DESC, c.chunk_index ASC, c.id ASC",
+        (class_id,),
+    ).fetchall()
+    if not rows:
+        return []
+
+    documents: list[list[str]] = []
+    for row in rows:
+        documents.append(_knowledge_terms(f"{row['material_title']}\n{row['content']}"))
+    n_docs = len(documents)
+    doc_freq: dict[str, int] = {}
+    for terms in documents:
+        for term in set(terms):
+            doc_freq[term] = doc_freq.get(term, 0) + 1
+
+    query_freq: dict[str, int] = {}
+    for term in query_terms:
+        query_freq[term] = query_freq.get(term, 0) + 1
+    avg_len = sum(len(terms) for terms in documents) / max(1, n_docs)
+    k1, b = 1.2, 0.75
+
+    def idf(term: str) -> float:
+        # BM25's positive IDF variant avoids negative contributions for common
+        # terms while still rewarding terms rare in this class's corpus.
+        df = doc_freq.get(term, 0)
+        return math.log(1.0 + (n_docs - df + 0.5) / (df + 0.5))
+
+    query_weights = {term: idf(term) * count for term, count in query_freq.items() if term in doc_freq}
+    query_norm = math.sqrt(sum(weight * weight for weight in query_weights.values()))
+    scored: list[tuple[float, float, float, int, dict]] = []
+    for row, terms in zip(rows, documents):
+        term_freq: dict[str, int] = {}
+        for term in terms:
+            term_freq[term] = term_freq.get(term, 0) + 1
+        doc_len = len(terms)
+        bm25 = 0.0
+        doc_weights: dict[str, float] = {}
+        for term, q_count in query_freq.items():
+            if term not in term_freq:
+                continue
+            weight = idf(term)
+            freq = term_freq[term]
+            bm25 += weight * (freq * (k1 + 1.0)) / (freq + k1 * (1.0 - b + b * doc_len / max(1.0, avg_len)))
+            doc_weights[term] = weight * freq
+        cosine = 0.0
+        if query_norm and doc_weights:
+            doc_norm = math.sqrt(sum(weight * weight for weight in doc_weights.values()))
+            if doc_norm:
+                cosine = sum(query_weights.get(term, 0.0) * weight for term, weight in doc_weights.items()) / (query_norm * doc_norm)
+        if bm25 <= 0.0 and cosine <= 0.0:
+            continue
+        payload = dict(row)
+        scored.append((bm25, cosine, 0.0, int(row["chunk_id"]), payload))
+
+    if not scored:
+        return []
+    # Rank each signal independently, then fuse reciprocal ranks.  BM25 and
+    # cosine scales vary with corpus size, while ranks remain stable.
+    bm25_rank = {item[3]: index for index, item in enumerate(sorted(scored, key=lambda item: (-item[0], item[3])), 1)}
+    cosine_rank = {item[3]: index for index, item in enumerate(sorted(scored, key=lambda item: (-item[1], item[3])), 1)}
+    fused: list[tuple[float, float, float, int, dict]] = []
+    for bm25, cosine, _unused, row_id, payload in scored:
+        rrf = 1.0 / (60.0 + bm25_rank[row_id]) + 1.0 / (60.0 + cosine_rank[row_id])
+        payload["score"] = rrf
+        fused.append((rrf, bm25, cosine, row_id, payload))
+    fused.sort(key=lambda item: (-item[0], -item[1], -item[2], item[3]))
+    return [item[4] for item in fused[:limit]]

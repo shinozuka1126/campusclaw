@@ -1,0 +1,85 @@
+{% extends 'base.html' %}
+{% block title %}知识问答 · CampusClaw{% endblock %}
+{% block body %}
+<header>
+  <div><strong>CampusClaw</strong> · {{ '教师' if g.user['role'] == 'teacher' else '学生' }} · 班级 {{ g.user['class_id'] }} · <a href="{{ url_for('materials.list_materials') }}">教学材料</a></div>
+  <form method="post" action="{{ url_for('auth.logout') }}"><button>退出登录</button></form>
+</header>
+<h1>本班知识库</h1>
+<p>每个问题先在本班做混合检索，取前 4 条切片再生成回答，并标出 [1]、[2]；没有命中时不调用模型。</p>
+<div class="tabs" role="tablist">
+  <button id="retrieve-tab" class="tab active" role="tab" aria-selected="true" type="button">知识检索</button>
+  <button id="ask-tab" class="tab" role="tab" aria-selected="false" type="button">知识问答</button>
+</div>
+<section id="retrieve-panel" class="card" role="tabpanel">
+  <h2>知识检索</h2>
+  <form id="retrieve-form">
+    <label for="retrieve-query">检索词</label>
+    <input id="retrieve-query" name="q" maxlength="500" required placeholder="例如：磁铁能吸木块吗？">
+    <button id="retrieve-button" type="submit">检索</button>
+  </form>
+  <p id="retrieve-status" class="status" aria-live="polite"></p>
+  <div id="retrieve-results"></div>
+</section>
+<section id="ask-panel" class="card" role="tabpanel" hidden>
+  <h2>知识问答</h2>
+  <form id="ask-form">
+    <label for="ask-question">问题</label>
+    <input id="ask-question" name="question" maxlength="500" required placeholder="例如：磁铁能吸木块吗？">
+    <button id="ask-button" type="submit">提问</button>
+  </form>
+  <p id="ask-status" class="status" aria-live="polite"></p>
+  <article id="answer" class="answer" hidden>
+    <h3>回答</h3>
+    <p id="answer-text"></p>
+  </article>
+  <div id="ask-sources"></div>
+</section>
+<script>
+(() => {
+  const token = () => sessionStorage.getItem("campusclaw_access_token");
+  const headers = (json) => {
+    const result = {"Accept": "application/json"};
+    if (json) result["Content-Type"] = "application/json";
+    const accessToken = token();
+    if (accessToken) result["Authorization"] = `Bearer ${accessToken}`;
+    return result;
+  };
+  const el = (id) => document.getElementById(id);
+  const setStatus = (id, message, error = false) => {
+    const node = el(id); node.textContent = message || ""; node.classList.toggle("error", error);
+  };
+  const sourceCard = (source) => {
+    const card = document.createElement("div"); card.className = "source card";
+    const title = document.createElement("h3"); title.textContent = `[${source.citation_id}] ${source.material_title} · 切片 ${source.chunk_index}`; card.append(title);
+    const range = document.createElement("p"); range.textContent = `原文区间：${source.start_offset}–${source.end_offset}`; card.append(range);
+    const content = document.createElement("pre"); content.textContent = source.content; card.append(content);
+    const links = document.createElement("p");
+    [[source.source_url, "查看材料"], [source.download_url, "下载原文"]].forEach(([url, label]) => { const a = document.createElement("a"); a.href = url; a.textContent = label; a.target = "_blank"; a.rel = "noopener"; links.append(a, " "); });
+    card.append(links); return card;
+  };
+  const renderSources = (container, sources) => { container.replaceChildren(...(sources || []).map(sourceCard)); };
+  const retrieveForm = el("retrieve-form");
+  retrieveForm.addEventListener("submit", async (event) => {
+    event.preventDefault(); const button = el("retrieve-button"); button.disabled = true; setStatus("retrieve-status", "检索中…"); el("retrieve-results").replaceChildren();
+    try {
+      const q = el("retrieve-query").value.trim(); const response = await fetch(`/api/knowledge/retrieve?q=${encodeURIComponent(q)}&limit=4`, {headers: headers(false), credentials: "same-origin"});
+      const payload = await response.json(); if (!response.ok) throw new Error(payload.error || "检索失败");
+      renderSources(el("retrieve-results"), payload.sources); setStatus("retrieve-status", payload.sources.length ? `找到 ${payload.sources.length} 条来源。` : "本班资料中没有找到相关内容。");
+    } catch (error) { setStatus("retrieve-status", error.message || "检索失败，请重试。", true); } finally { button.disabled = false; }
+  });
+  const askForm = el("ask-form");
+  askForm.addEventListener("submit", async (event) => {
+    event.preventDefault(); const button = el("ask-button"); if (button.disabled) return; button.disabled = true; setStatus("ask-status", "正在检索并生成回答…", false); el("answer").hidden = true; el("ask-sources").replaceChildren();
+    try {
+      const response = await fetch("/api/knowledge/ask", {method: "POST", headers: headers(true), credentials: "same-origin", body: JSON.stringify({question: el("ask-question").value.trim()})});
+      const payload = await response.json(); if (!response.ok) throw new Error(payload.error || "问答失败");
+      if (payload.status === "no_context") { setStatus("ask-status", payload.answer); return; }
+      el("answer-text").textContent = payload.answer; el("answer").hidden = false; renderSources(el("ask-sources"), payload.sources); setStatus("ask-status", `已基于 ${payload.sources.length} 条本班来源回答。`);
+    } catch (error) { setStatus("ask-status", error.message || "问答失败，请重试。", true); } finally { button.disabled = false; }
+  });
+  const setTab = (showAsk) => { el("retrieve-panel").hidden = showAsk; el("ask-panel").hidden = !showAsk; el("retrieve-tab").classList.toggle("active", !showAsk); el("ask-tab").classList.toggle("active", showAsk); el("retrieve-tab").setAttribute("aria-selected", String(!showAsk)); el("ask-tab").setAttribute("aria-selected", String(showAsk)); };
+  el("retrieve-tab").addEventListener("click", () => setTab(false)); el("ask-tab").addEventListener("click", () => setTab(true));
+})();
+</script>
+{% endblock %}

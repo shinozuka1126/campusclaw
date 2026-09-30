@@ -25,6 +25,12 @@ def create_app(test_config: dict | None = None) -> Flask:
             UPLOAD_FOLDER=upload_dir,
             MAX_CONTENT_LENGTH=2 * 1024 * 1024,
             TOKEN_TTL=3600,
+            DEEPSEEK_API_KEY=os.environ.get("DEEPSEEK_API_KEY", ""),
+            DEEPSEEK_MODEL=os.environ.get("DEEPSEEK_MODEL", "deepseek-chat"),
+            DEEPSEEK_BASE_URL=os.environ.get(
+                "DEEPSEEK_BASE_URL", "https://api.deepseek.com/chat/completions"
+            ),
+            DEEPSEEK_TIMEOUT=20,
         )
     else:
         app.config.from_mapping(
@@ -33,6 +39,10 @@ def create_app(test_config: dict | None = None) -> Flask:
             UPLOAD_FOLDER=test_config.get("UPLOAD_FOLDER", str(Path(app.instance_path) / "uploads")),
             MAX_CONTENT_LENGTH=2 * 1024 * 1024,
             TOKEN_TTL=3600,
+            DEEPSEEK_API_KEY="",
+            DEEPSEEK_MODEL="deepseek-chat",
+            DEEPSEEK_BASE_URL="https://api.deepseek.com/chat/completions",
+            DEEPSEEK_TIMEOUT=20,
         )
         app.config.update(test_config)
         if not app.config.get("SECRET_KEY"):
@@ -45,9 +55,11 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     from .auth import bp as auth_bp
     from .materials import bp as materials_bp
+    from .qa import bp as qa_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(materials_bp)
+    app.register_blueprint(qa_bp)
 
     @app.get("/health")
     def health():

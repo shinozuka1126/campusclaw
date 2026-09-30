@@ -204,3 +204,99 @@ def test_materials_page_contains_bearer_fetch_for_browser_evidence(client):
     assert "Authorization" in body
     assert "campusclaw_access_token" in body
 
+
+def test_knowledge_page_and_retrieve_are_protected_and_class_scoped(client):
+    assert client.get("/knowledge").status_code == 302
+    assert login(client, "student_a1", "StudentA1!2026").status_code == 302
+    page = client.get("/knowledge")
+    assert page.status_code == 200
+    assert "知识检索" in page.get_data(as_text=True)
+    response = client.get("/api/knowledge/retrieve?q=B%20班&limit=4")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["total"] <= 4
+    assert all(source["material_title"].startswith("A 班") for source in payload["sources"])
+    assert "B 班欢迎材料" not in response.get_data(as_text=True)
+
+
+def test_hybrid_retrieve_matches_science_question_with_provenance(client):
+    assert login(client, "teacher_a", "TeacherA!2026").status_code == 302
+    uploaded = client.post(
+        "/api/materials/upload",
+        data={"file": (io.BytesIO("磁铁能吸引铁钉，不能吸引木块。".encode()), "science.md")},
+    )
+    assert uploaded.status_code == 201
+    response = client.get("/api/knowledge/retrieve?q=磁铁能吸木块吗？&limit=4")
+    assert response.status_code == 200
+    sources = response.get_json()["sources"]
+    assert sources and sources[0]["material_title"] == "science"
+    assert "木块" in sources[0]["content"]
+    assert sources[0]["start_offset"] == 0
+
+
+def test_knowledge_ask_no_context_does_not_call_model(client, app, monkeypatch):
+    assert login(client, "student_a1", "StudentA1!2026").status_code == 302
+    called = False
+
+    def fail_if_called(_question, _sources):
+        nonlocal called
+        called = True
+        raise AssertionError("model must not be called without context")
+
+    monkeypatch.setattr("app.qa._call_deepseek", fail_if_called)
+    response = client.post("/api/knowledge/ask", json={"question": "量子曲速引擎的颜色？"})
+    assert response.status_code == 200
+    assert response.get_json()["status"] == "no_context"
+    assert response.get_json()["model_called"] is False
+    assert called is False
+
+
+def test_knowledge_ask_requires_config_when_context_exists(client, app):
+    assert login(client, "student_a1", "StudentA1!2026").status_code == 302
+    app.config["DEEPSEEK_API_KEY"] = ""
+    response = client.post("/api/knowledge/ask", json={"question": "预置教学材料"})
+    assert response.status_code == 503
+    assert "密钥" not in response.get_data(as_text=True)
+    assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_knowledge_ask_provider_failure_is_generic(client, app, monkeypatch):
+    assert login(client, "student_a1", "StudentA1!2026").status_code == 302
+    app.config["DEEPSEEK_API_KEY"] = "test-only-key"
+    monkeypatch.setattr("app.qa._call_deepseek", lambda *_args: (_ for _ in ()).throw(TimeoutError()))
+    response = client.post("/api/knowledge/ask", json={"question": "预置教学材料"})
+    assert response.status_code == 503
+    assert "TimeoutError" not in response.get_data(as_text=True)
+    assert "test-only-key" not in response.get_data(as_text=True)
+
+
+def test_knowledge_ask_returns_cited_sources_with_mocked_deepseek(client, app, monkeypatch):
+    assert login(client, "student_a1", "StudentA1!2026").status_code == 302
+    app.config["DEEPSEEK_API_KEY"] = "test-only-key"
+    monkeypatch.setattr("app.qa._call_deepseek", lambda _question, _sources: "这是本班材料的内容。[1]")
+    response = client.post("/api/knowledge/ask", json={"question": "预置教学材料"})
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["status"] == "answered"
+    assert payload["model_called"] is True
+    assert payload["sources"][0]["citation_id"] == 1
+    assert payload["sources"][0]["material_title"] == "A 班欢迎材料"
+    assert payload["sources"][0]["content"]
+
+
+@pytest.mark.parametrize("answer", ["没有引用的回答", "越界引用[9]"])
+def test_knowledge_ask_rejects_invalid_model_citations(client, app, monkeypatch, answer):
+    assert login(client, "student_a1", "StudentA1!2026").status_code == 302
+    app.config["DEEPSEEK_API_KEY"] = "test-only-key"
+    monkeypatch.setattr("app.qa._call_deepseek", lambda _question, _sources: answer)
+    response = client.post("/api/knowledge/ask", json={"question": "预置教学材料"})
+    assert response.status_code == 502
+    assert "回答" not in response.get_data(as_text=True) or "引用无效" in response.get_data(as_text=True)
+
+
+def test_knowledge_ask_rejects_invalid_questions_without_model(client, app, monkeypatch):
+    assert login(client, "student_a1", "StudentA1!2026").status_code == 302
+    monkeypatch.setattr("app.qa._call_deepseek", lambda *_args: (_ for _ in ()).throw(AssertionError("not called")))
+    assert client.post("/api/knowledge/ask", json={"question": ""}).status_code == 400
+    assert client.post("/api/knowledge/ask", json={"question": "x" * 501}).status_code == 400
+

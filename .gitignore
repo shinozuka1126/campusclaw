@@ -6,6 +6,7 @@ __pycache__/
 .pytest_cache/
 .tmp/
 tmp-pytest/
+tmp-pytest-run*/
 tmp-token*.db
 tmp-token*-uploads/
 evidence/*.png
