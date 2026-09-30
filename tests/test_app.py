@@ -100,6 +100,22 @@ def test_teacher_upload_writes_material_and_knowledge_entry(client, app):
     assert result[0]["end_offset"] == len("新课内容")
 
 
+def test_teacher_can_upload_chinese_named_gb18030_txt(client, app):
+    assert login(client, "teacher_a", "TeacherA!2026").status_code == 302
+    content = "磁铁能吸引铁钉，不能吸引木块。".encode("gb18030")
+    response = client.post(
+        "/api/materials/upload",
+        data={"file": (io.BytesIO(content), "小学科学资料.txt")},
+    )
+    assert response.status_code == 201
+    with sqlite3.connect(app.config["DATABASE"]) as db:
+        row = db.execute(
+            "SELECT title FROM materials WHERE id=?", (response.get_json()["material_id"],)
+        ).fetchone()
+    assert row == ("小学科学资料",)
+    assert client.get("/api/knowledge/search?q=木块").get_json()["total"] == 1
+
+
 def test_knowledge_chunks_are_idempotently_backfilled(app):
     import sqlite3
 

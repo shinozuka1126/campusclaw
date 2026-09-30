@@ -14,6 +14,16 @@ bp = Blueprint("materials", __name__)
 ALLOWED_EXTENSIONS = {"txt", "md"}
 
 
+def _decode_text(body: bytes) -> str | None:
+    """Decode common text-file encodings without accepting binary garbage."""
+    for encoding in ("utf-8-sig", "utf-16", "utf-8", "gb18030"):
+        try:
+            return body.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return None
+
+
 def _json_requested() -> bool:
     return request.path.startswith("/api/") or request.is_json
 
@@ -124,17 +134,23 @@ def upload():
     uploaded = request.files.get("file")
     if uploaded is None or not uploaded.filename:
         return _upload_error("请选择一个文件。")
-    safe_name = secure_filename(uploaded.filename)
-    suffix = Path(safe_name).suffix.lower().lstrip(".")
+    original_name = Path(uploaded.filename).name
+    original_suffix = Path(original_name).suffix.lower()
+    suffix = original_suffix.lstrip(".")
     if suffix not in ALLOWED_EXTENSIONS:
         return _upload_error("仅支持 .txt 或 .md 文件。")
+    safe_name = secure_filename(original_name)
+    # secure_filename removes non-ASCII stems. Preserve the validated suffix so
+    # names such as “科学资料.txt” remain uploadable without trusting the path.
+    if Path(safe_name).suffix.lower() != original_suffix:
+        safe_stem = secure_filename(Path(original_name).stem) or "material"
+        safe_name = f"{safe_stem}.{suffix}"
     body = uploaded.read()
     if not body.strip():
         return _upload_error("文件不能为空。")
-    try:
-        text = body.decode("utf-8")
-    except UnicodeDecodeError:
-        return _upload_error("文件必须使用 UTF-8 编码。")
+    text = _decode_text(body)
+    if text is None:
+        return _upload_error("文件必须是 UTF-8、UTF-16 或 GB18030 编码的文本。")
 
     class_name = get_db().execute("SELECT name FROM classes WHERE id=?", (g.user["class_id"],)).fetchone()["name"]
     token = f"{uuid.uuid4().hex}_{safe_name}"
@@ -144,7 +160,7 @@ def upload():
     db = get_db()
     try:
         absolute_path.write_bytes(body)
-        title = Path(safe_name).stem
+        title = Path(original_name).stem or Path(safe_name).stem
         cur = db.execute(
             "INSERT INTO materials(title, class_id, file_path, uploaded_by) VALUES (?, ?, ?, ?)",
             (title, g.user["class_id"], str(relative_path), g.user["id"]),
