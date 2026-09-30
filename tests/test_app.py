@@ -127,3 +127,80 @@ def test_invalid_upload_leaves_no_db_row_or_file(client, app):
     with sqlite3.connect(app.config["DATABASE"]) as db:
         assert db.execute("SELECT COUNT(*) FROM materials WHERE title='bad'").fetchone()[0] == 0
 
+
+def issue_token(client, username="student_a1", password="StudentA1!2026"):
+    response = client.post(
+        "/api/auth/login",
+        json={"username": username, "password": password},
+    )
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["token_type"] == "Bearer"
+    assert payload["access_token"].count(".") == 2
+    return payload["access_token"]
+
+
+def test_api_login_issues_bearer_token(client):
+    response = client.post(
+        "/api/auth/login",
+        json={"username": "teacher_a", "password": "TeacherA!2026"},
+    )
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["token_type"] == "Bearer"
+    assert payload["expires_in"] > 0
+    assert payload["access_token"].count(".") == 2
+    assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_bearer_token_can_access_api_without_cookie(app, client):
+    token = issue_token(client)
+    bearer_client = app.test_client()
+    response = bearer_client.get(
+        "/api/materials", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 200
+    titles = {row["title"] for row in response.get_json()["materials"]}
+    assert "A 班欢迎材料" in titles
+    assert "B 班欢迎材料" not in titles
+
+
+def test_invalid_bearer_token_returns_401_even_with_cookie(client):
+    assert login(client, "student_a1", "StudentA1!2026").status_code == 302
+    response = client.get(
+        "/api/materials", headers={"Authorization": "Bearer tampered"}
+    )
+    assert response.status_code == 401
+    assert "A 班欢迎材料" not in response.get_data(as_text=True)
+
+
+def test_bearer_token_cannot_cross_class(app, client):
+    token = issue_token(client)
+    bearer_client = app.test_client()
+    response = bearer_client.get(
+        "/api/knowledge/search?q=B%20%E7%8F%AD&class_id=2",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.get_json()["results"] == []
+    assert "B 班" not in response.get_data(as_text=True)
+
+
+def test_expired_bearer_token_is_rejected(app, client):
+    app.config["TOKEN_TTL"] = 0
+    token = issue_token(client)
+    response = app.test_client().get(
+        "/api/materials", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 401
+
+
+def test_materials_page_contains_bearer_fetch_for_browser_evidence(client):
+    assert login(client, "student_a1", "StudentA1!2026").status_code == 302
+    response = client.get("/materials")
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "/api/materials" in body
+    assert "Authorization" in body
+    assert "campusclaw_access_token" in body
+

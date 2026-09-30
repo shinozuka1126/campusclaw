@@ -4,10 +4,38 @@
 <main class="card" style="max-width:420px;margin:5rem auto">
   <h1>CampusClaw</h1><p>认证、班级隔离、知识库检索与内容溯源（迭代 2）</p>
   {% with messages = get_flashed_messages() %}{% for message in messages %}<div class="flash">{{ message }}</div>{% endfor %}{% endwith %}
-  <form method="post">
+  <form method="post" id="login-form">
     <label>用户名<input name="username" required autocomplete="username"></label>
     <label>密码<input name="password" type="password" required autocomplete="current-password"></label>
     <button type="submit">登录</button>
   </form>
 </main>
+<script>
+  document.getElementById("login-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const button = form.querySelector("button[type=submit]");
+    button.disabled = true;
+    const message = form.querySelector(".client-error") || document.createElement("div");
+    message.className = "client-error error";
+    try {
+      const response = await fetch("{{ url_for('auth.api_login') }}", {
+        method: "POST",
+        headers: {"Content-Type": "application/json", "Accept": "application/json"},
+        body: JSON.stringify({
+          username: form.elements.username.value,
+          password: form.elements.password.value
+        })
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "登录失败");
+      sessionStorage.setItem("campusclaw_access_token", payload.access_token);
+      window.location.assign("{{ url_for('materials.list_materials') }}");
+    } catch (error) {
+      message.textContent = error.message;
+      if (!message.parentElement) form.prepend(message);
+      button.disabled = false;
+    }
+  });
+</script>
 {% endblock %}

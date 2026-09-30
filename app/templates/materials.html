@@ -27,4 +27,24 @@
 <section class="card"><h2>上传材料</h2><form method="post" action="{{ url_for('materials.upload') }}" enctype="multipart/form-data"><input type="file" name="file" accept=".txt,.md" required><button type="submit">上传并入库</button></form></section>
 {% endif %}
 <table><thead><tr><th>标题</th><th>上传者</th><th>时间</th></tr></thead><tbody>{% for material in materials %}<tr><td>{{ material['title'] }}</td><td>{{ material['uploaded_by'] }}</td><td>{{ material['created_at'] }}</td></tr>{% else %}<tr><td colspan="3">暂无材料</td></tr>{% endfor %}</tbody></table>
+<script>
+  (() => {
+    const token = sessionStorage.getItem("campusclaw_access_token");
+    const logoutForm = document.querySelector('form[action$="/logout"]');
+    if (logoutForm) {
+      logoutForm.addEventListener("submit", () => sessionStorage.removeItem("campusclaw_access_token"));
+    }
+    if (!token) return;
+    fetch("{{ url_for('materials.api_list_materials') }}", {
+      method: "GET",
+      credentials: "omit",
+      headers: {
+        "Accept": "application/json",
+        "Authorization": `Bearer ${token}`
+      }
+    }).then((response) => {
+      if (response.status === 401) sessionStorage.removeItem("campusclaw_access_token");
+    }).catch(() => {});
+  })();
+</script>
 {% endblock %}

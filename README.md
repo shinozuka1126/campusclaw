@@ -30,6 +30,20 @@ curl.exe -b cookies.txt "http://localhost:8080/api/knowledge/search?q=项目&lim
 
 每个命中包含 `material_id`、`material_title`、`chunk_id`、正文字符区间、片段、材料详情 URL 和下载 URL。服务端从会话读取班级，忽略请求中的 `class_id`；本期使用 SQLite 片段索引，不需要单独启动向量数据库。
 
+## Bearer token 演示
+
+除兼容 HTML 页面的 signed-cookie session 外，项目提供短期的 HS256 Bearer token，用于 API 客户端和浏览器 Network 面板演示：
+
+```powershell
+$login = curl.exe -sS -X POST http://localhost:8080/api/auth/login `
+  -H "Content-Type: application/json" `
+  -d '{"username":"student_a1","password":"StudentA1!2026"}' | ConvertFrom-Json
+$token = $login.access_token
+curl.exe -i http://localhost:8080/api/materials -H "Authorization: Bearer $token"
+```
+
+`/api/auth/login` 返回 `access_token`、`token_type=Bearer` 和 `expires_in`。服务端验证签名和有效期后，按 token 的 `sub` 回查用户表，再从数据库取得角色和班级；不会信任 token 或 URL 中的 `class_id`。登录页面会把 token 暂存到当前浏览器会话，材料页随后以 `Authorization: Bearer <token>` 请求 `/api/materials`，因此可在 DevTools 的 Network → Fetch/XHR → `materials` → Headers 中看到该请求头。token 不放入 URL，响应设置 `Cache-Control: no-store`。
+
 预置账号：
 
 | 账号 | 密码 | 角色 | 班级 |

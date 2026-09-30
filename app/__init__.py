@@ -24,6 +24,7 @@ def create_app(test_config: dict | None = None) -> Flask:
             DATABASE=database_path,
             UPLOAD_FOLDER=upload_dir,
             MAX_CONTENT_LENGTH=2 * 1024 * 1024,
+            TOKEN_TTL=3600,
         )
     else:
         app.config.from_mapping(
@@ -31,6 +32,7 @@ def create_app(test_config: dict | None = None) -> Flask:
             DATABASE=test_config.get("DATABASE", str(Path(app.instance_path) / "app.db")),
             UPLOAD_FOLDER=test_config.get("UPLOAD_FOLDER", str(Path(app.instance_path) / "uploads")),
             MAX_CONTENT_LENGTH=2 * 1024 * 1024,
+            TOKEN_TTL=3600,
         )
         app.config.update(test_config)
         if not app.config.get("SECRET_KEY"):
