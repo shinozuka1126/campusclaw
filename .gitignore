@@ -8,3 +8,6 @@ __pycache__/
 tmp-pytest/
 tmp-token*.db
 tmp-token*-uploads/
+evidence/*.png
+evidence/*.html
+evidence/homework-answers-draft.md
