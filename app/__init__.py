@@ -54,10 +54,12 @@ def create_app(test_config: dict | None = None) -> Flask:
     app.teardown_appcontext(close_db)
 
     from .auth import bp as auth_bp
+    from .ai import bp as ai_bp
     from .materials import bp as materials_bp
     from .qa import bp as qa_bp
 
     app.register_blueprint(auth_bp)
+    app.register_blueprint(ai_bp)
     app.register_blueprint(materials_bp)
     app.register_blueprint(qa_bp)
 

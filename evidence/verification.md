@@ -39,3 +39,22 @@ docker compose up -d
 规约流程证据：`openspec validate add-auth-rbac-class-knowledge --strict` 已返回 `Change ... is valid`；第四课执行 `openspec validate add-class-scoped-knowledge-retrieval --strict` 返回 `Change 'add-class-scoped-knowledge-retrieval' is valid`。
 
 SQLite 的 `knowledge_chunks` 与既有 `data/` volume 一起持久化；容器重启验收命令仍为 `docker compose down` 后 `docker compose up -d`，不要使用 `down -v`。当前本地 Python 测试结果为 `12 passed`；Compose 场景需在 Docker Desktop 环境按上述命令复核。
+
+## 第 5 课 AI 工作台验收
+
+在仓库根执行 `pytest -q`，当前本地替身测试结果为 `37 passed`。新增用例覆盖：
+
+1. 三个 AI 应用、提示词模板和版本信息；
+2. 只向模型发送当前班级命中的最多四个知识片段，无命中不调用模型；
+3. 内置/教师上传 Skill、动作白名单和危险代码拒绝；
+4. 内置知识检索工具、教师注册 MCP 工具及 JSON Schema 参数校验；
+5. MCP `initialize`、`notifications/initialized`、`tools/list`、`tools/call` 握手、会话头和超时；
+6. trace 保存每一次模型调用的 messages、工具 schema、参数、结果和返回内容，并脱敏认证信息。
+
+测试使用 monkeypatch 的 provider 和 MCP HTTP 替身，不需要真实 DeepSeek 密钥或外部 MCP 服务。
+
+当前环境没有安装 OpenSpec CLI，且 npm 离线缓存没有 `@fission-ai/openspec`，因此 strict 校验命令因 `ENOTCACHED` 无法执行。网络可用后在本变更目录运行：
+
+```powershell
+npx --yes @fission-ai/openspec validate add-ai-workbench-capabilities --strict
+```

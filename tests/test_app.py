@@ -1,4 +1,5 @@
 import io
+import json
 import sqlite3
 import pytest
 
@@ -315,4 +316,199 @@ def test_knowledge_ask_rejects_invalid_questions_without_model(client, app, monk
     monkeypatch.setattr("app.qa._call_deepseek", lambda *_args: (_ for _ in ()).throw(AssertionError("not called")))
     assert client.post("/api/knowledge/ask", json={"question": ""}).status_code == 400
     assert client.post("/api/knowledge/ask", json={"question": "x" * 501}).status_code == 400
+
+
+def test_ai_workbench_seeds_multiple_apps_templates_skills_and_tools(client):
+    assert login(client, "student_a1", "StudentA1!2026").status_code == 302
+    page = client.get("/ai")
+    assert page.status_code == 200
+    apps = client.get("/api/ai/apps").get_json()["apps"]
+    assert {item["app_key"] for item in apps} >= {"chat", "knowledge_qa", "summarizer"}
+    templates = client.get("/api/ai/apps/knowledge_qa/templates").get_json()["templates"]
+    assert templates and "{context}" in templates[0]["user_prompt"]
+    skills = client.get("/api/ai/skills").get_json()["skills"]
+    assert any(item["action"] == "summarize_material" for item in skills)
+    tools = client.get("/api/ai/tools").get_json()["tools"]
+    assert any(item["name"] == "knowledge_search" for item in tools)
+
+
+def test_ai_chat_records_rendered_prompt_and_class_scoped_sources(client, app, monkeypatch):
+    assert login(client, "student_a1", "StudentA1!2026").status_code == 302
+    captured = {}
+
+    def fake_provider(messages, app_cfg, tools):
+        captured["messages"] = messages
+        captured["app"] = app_cfg
+        captured["tools"] = tools
+        return {"choices": [{"message": {"content": "材料说明了本班内容。[1]"}}]}
+
+    monkeypatch.setattr("app.ai._provider", fake_provider)
+    response = client.post(
+        "/api/ai/chat",
+        json={"app_key": "knowledge_qa", "question": "预置教学材料"},
+    )
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["status"] == "answered"
+    assert payload["request_id"]
+    assert captured["app"]["app_key"] == "knowledge_qa"
+    joined = json.dumps(captured["messages"], ensure_ascii=False)
+    assert "预置教学材料" in joined
+    assert "A 班欢迎材料" in joined
+    assert "B 班欢迎材料" not in joined
+    trace = client.get(f"/api/ai/traces/{payload['request_id']}")
+    assert trace.status_code == 200
+    trace_payload = trace.get_json()["trace"]
+    assert trace_payload["status"] == "answered"
+    assert trace_payload["request"]["knowledge_policy"] == "top_k"
+    assert trace_payload["request"]["matched_chunk_ids"]
+    assert trace_payload["request"]["template"]["version"] == 1
+    assert "预置教学材料" in json.dumps(trace_payload["request"]["model_calls"][0]["messages"], ensure_ascii=False)
+    assert "Authorization" not in trace.get_data(as_text=True)
+    assert "api_key" not in trace.get_data(as_text=True).lower()
+
+
+def test_ai_no_context_does_not_call_provider_and_trace_is_visible(client, monkeypatch):
+    assert login(client, "student_a1", "StudentA1!2026").status_code == 302
+    monkeypatch.setattr("app.ai._provider", lambda *_args: (_ for _ in ()).throw(AssertionError("must not call provider")))
+    response = client.post("/api/ai/chat", json={"app_key": "knowledge_qa", "question": "外星基地的温度是多少"})
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["status"] == "no_context"
+    assert payload["model_called"] is False
+    trace = client.get(f"/api/ai/traces/{payload['request_id']}")
+    assert trace.status_code == 200
+    assert trace.get_json()["trace"]["status"] == "no_context"
+
+
+def test_ai_skill_is_included_and_arbitrary_code_is_rejected(client, monkeypatch):
+    assert login(client, "teacher_a", "TeacherA!2026").status_code == 302
+    upload = client.post(
+        "/api/ai/skills/upload",
+        data={"file": (io.BytesIO(b'{"name":"safe","instructions":"Use short bullets","action":"summarize_material"}'), "safe.json")},
+    )
+    assert upload.status_code == 201
+    skill_id = upload.get_json()["skill_id"]
+    captured = {}
+    def fake_provider(messages, _app, _tools):
+        captured["messages"] = messages
+        return {"choices": [{"message": {"content": "ok"}}]}
+    monkeypatch.setattr("app.ai._provider", fake_provider)
+    response = client.post("/api/ai/chat", json={"app_key": "chat", "skill_id": skill_id, "question": "你好"})
+    assert response.status_code == 200
+    assert "Use short bullets" in json.dumps(captured["messages"])
+    rejected = client.post("/api/ai/skills/upload", data={"file": (io.BytesIO(b'{"instructions":"run subprocess", "action":"none"}'), "bad.json")})
+    assert rejected.status_code == 422
+
+
+def test_ai_tool_schema_is_sent_and_tool_call_is_audited(client, monkeypatch):
+    assert login(client, "student_a1", "StudentA1!2026").status_code == 302
+    calls = []
+
+    def fake_provider(messages, _app_cfg, tools):
+        calls.append((messages, tools))
+        if len(calls) == 1:
+            return {"choices": [{"message": {"content": "", "tool_calls": [{"id": "call-1", "function": {"name": "knowledge_search", "arguments": json.dumps({"query": "预置"})}}]}}]}
+        return {"choices": [{"message": {"content": "工具返回了本班材料。[1]"}}]}
+
+    monkeypatch.setattr("app.ai._provider", fake_provider)
+    tool_id = client.get("/api/ai/tools").get_json()["tools"][0]["id"]
+    response = client.post("/api/ai/chat", json={"app_key": "chat", "tool_ids": [tool_id], "question": "查找预置材料"})
+    assert response.status_code == 200
+    assert len(calls) == 2
+    assert calls[0][1][0]["function"]["name"] == "knowledge_search"
+    request_id = response.get_json()["request_id"]
+    trace = client.get(f"/api/ai/traces/{request_id}").get_json()["trace"]
+    assert trace["request"]["tool_calls"][0]["name"] == "knowledge_search"
+    assert trace["request"]["tool_calls"][0]["arguments"]["query"] == "预置"
+    assert len(trace["request"]["model_calls"]) == 2
+    assert any(message["role"] == "tool" for message in trace["request"]["model_calls"][1]["messages"])
+
+
+def test_ai_tool_arguments_are_validated_and_audited(client, monkeypatch):
+    assert login(client, "student_a1", "StudentA1!2026").status_code == 302
+
+    def fake_provider(_messages, _app_cfg, _tools):
+        return {"choices": [{"message": {"content": "", "tool_calls": [{"id": "call-invalid", "function": {"name": "knowledge_search", "arguments": json.dumps({"limit": "four"})}}]}}]}
+
+    monkeypatch.setattr("app.ai._provider", fake_provider)
+    tool_id = client.get("/api/ai/tools").get_json()["tools"][0]["id"]
+    response = client.post("/api/ai/chat", json={"app_key": "chat", "tool_ids": [tool_id], "question": "查找材料"})
+    assert response.status_code == 503
+
+
+def test_ai_teacher_can_create_template_and_register_mcp_tool(client):
+    assert login(client, "teacher_a", "TeacherA!2026").status_code == 302
+    template = client.post(
+        "/api/ai/templates",
+        json={"app_key": "chat", "name": "课堂模板", "system_prompt": "请简短回答", "user_prompt": "问题：{question}"},
+    )
+    assert template.status_code == 201
+    tool = client.post(
+        "/api/ai/tools",
+        json={"name": "class_calendar", "description": "读取课堂日程", "schema": {"type": "object"}, "kind": "mcp", "endpoint": "http://mcp.invalid/rpc"},
+    )
+    assert tool.status_code == 201
+    assert any(item["name"] == "class_calendar" for item in client.get("/api/ai/tools").get_json()["tools"])
+
+
+def test_ai_mcp_adapter_performs_handshake_and_audits_call(client, monkeypatch):
+    assert login(client, "teacher_a", "TeacherA!2026").status_code == 302
+    created = client.post(
+        "/api/ai/tools",
+        json={"name": "class_calendar", "description": "读取课堂日程", "schema": {"type": "object", "properties": {"week": {"type": "integer"}}, "required": ["week"]}, "endpoint": "http://mcp.test/rpc"},
+    )
+    assert created.status_code == 201
+    requests = []
+
+    class FakeResponse:
+        def __init__(self, body, headers=None):
+            self._body = body
+            self.headers = headers or {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return self._body
+
+    def fake_urlopen(req, timeout):
+        body = json.loads(req.data.decode("utf-8"))
+        requests.append((body, dict(req.headers), timeout))
+        method = body["method"]
+        if method == "initialize":
+            return FakeResponse(b'{"jsonrpc":"2.0","id":"1","result":{"protocolVersion":"2025-06-18"}}', {"Mcp-Session-Id": "session-1"})
+        if method == "notifications/initialized":
+            return FakeResponse(b"")
+        if method == "tools/list":
+            return FakeResponse(b'{"jsonrpc":"2.0","id":"2","result":{"tools":[{"name":"class_calendar"}]}}')
+        assert method == "tools/call"
+        return FakeResponse('{"jsonrpc":"2.0","id":"3","result":{"content":[{"type":"text","text":"周一有课"}]}}'.encode("utf-8"))
+
+    monkeypatch.setattr("app.ai.urllib.request.urlopen", fake_urlopen)
+    provider_calls = []
+
+    def fake_provider(messages, _app_cfg, _tools):
+        provider_calls.append(messages)
+        if len(provider_calls) == 1:
+            return {"choices": [{"message": {"content": "", "tool_calls": [{"id": "call-1", "function": {"name": "class_calendar", "arguments": json.dumps({"week": 1})}}]}}]}
+        return {"choices": [{"message": {"content": "本周一有课。[1]"}}]}
+
+    monkeypatch.setattr("app.ai._provider", fake_provider)
+    response = client.post("/api/ai/chat", json={"app_key": "chat", "tool_ids": [created.get_json()["tool_id"]], "question": "查本周课表"})
+    assert response.status_code == 200
+    assert [item[0]["method"] for item in requests] == ["initialize", "notifications/initialized", "tools/list", "tools/call"]
+    assert requests[-1][0]["params"] == {"name": "class_calendar", "arguments": {"week": 1}}
+    assert requests[-1][1].get("Mcp-session-id") == "session-1"
+    trace = client.get(f"/api/ai/traces/{response.get_json()['request_id']}").get_json()["trace"]
+    assert trace["request"]["tool_calls"][0]["result"]["content"][0]["text"] == "周一有课"
+
+
+def test_ai_student_cannot_upload_skill_or_register_tool(client):
+    assert login(client, "student_a1", "StudentA1!2026").status_code == 302
+    assert client.post("/api/ai/skills/upload", data={"file": (io.BytesIO(b"instructions"), "x.md")}).status_code == 403
+    assert client.post("/api/ai/tools", json={"name": "x", "description": "x", "schema": {}, "endpoint": "http://x"}).status_code == 403
 

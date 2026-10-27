@@ -1,0 +1,35 @@
+{% extends 'base.html' %}
+{% block title %}AI 工作台 · CampusClaw{% endblock %}
+{% block body %}
+<header><div><strong>CampusClaw</strong> · AI 工作台 · 班级 {{ g.user['class_id'] }} · <a href="{{ url_for('materials.list_materials') }}">教学材料</a></div><form method="post" action="{{ url_for('auth.logout') }}"><button>退出登录</button></form></header>
+<h1>AI 工作台</h1>
+<p>选择一个应用、模板和可选 Skill。页面下方会显示本次请求的编号和实际调用详情。</p>
+<section class="card">
+  <form id="ai-form">
+    <label>AI 应用<select id="app-key" required>{% for app in apps %}<option value="{{ app['app_key'] }}">{{ app['name'] }}：{{ app['description'] }}</option>{% endfor %}</select></label>
+    <label>提示词模板<select id="template-id"></select></label>
+    <label>Skill（可选）<select id="skill-id"><option value="">不使用 Skill</option>{% for skill in skills %}<option value="{{ skill['id'] }}">{{ skill['name'] }} v{{ skill['version'] }}</option>{% endfor %}</select></label>
+    <label>工具（可多选）<select id="tool-ids" multiple size="3">{% for tool in tools %}<option value="{{ tool['id'] }}">{{ tool['name'] }}：{{ tool['description'] }}</option>{% endfor %}</select></label>
+    <label>问题<textarea id="question" rows="4" required maxlength="500" placeholder="例如：请总结本班材料中的主要知识点"></textarea></label>
+    <button id="ask-button" type="submit">发送请求</button>
+  </form>
+  <p id="status" class="status" aria-live="polite"></p>
+</section>
+<section id="answer-card" class="card" hidden><h2>回答</h2><pre id="answer-text"></pre><div id="sources"></div><p><a id="trace-link" href="#">查看本次请求详情</a></p></section>
+<section id="trace-card" class="card" hidden><h2>调用详情</h2><pre id="trace-text"></pre></section>
+{% if g.user['role'] == 'teacher' %}
+<section class="card"><h2>上传声明式 Skill</h2><p>只接受 JSON、Markdown 或文本说明，不执行上传文件中的代码。</p><form id="skill-form"><input type="file" name="file" accept=".json,.md,.txt" required><button type="submit">上传 Skill</button></form><p id="skill-status" class="status"></p></section>
+{% endif %}
+<script>
+(() => {
+  const token = sessionStorage.getItem("campusclaw_access_token");
+  const headers = (json) => { const h = {"Accept":"application/json"}; if (json) h["Content-Type"] = "application/json"; if (token) h["Authorization"] = `Bearer ${token}`; return h; };
+  const appSelect = document.getElementById("app-key");
+  async function loadTemplates() { const response = await fetch(`/api/ai/apps/${encodeURIComponent(appSelect.value)}/templates`, {headers: headers(false), credentials:"same-origin"}); const body = await response.json(); const select = document.getElementById("template-id"); select.replaceChildren(...(body.templates || []).map(item => { const option=document.createElement("option"); option.value=item.id; option.textContent=`${item.name} v${item.version}`; return option; })); }
+  appSelect.addEventListener("change", loadTemplates); loadTemplates();
+  document.getElementById("ai-form").addEventListener("submit", async (event) => { event.preventDefault(); const button=document.getElementById("ask-button"); button.disabled=true; document.getElementById("status").textContent="请求处理中…"; document.getElementById("answer-card").hidden=true; document.getElementById("trace-card").hidden=true; const tools=[...document.getElementById("tool-ids").selectedOptions].map(option=>option.value); try { const response=await fetch("/api/ai/chat",{method:"POST",headers:headers(true),credentials:"same-origin",body:JSON.stringify({app_key:appSelect.value,template_id:document.getElementById("template-id").value,skill_id:document.getElementById("skill-id").value||null,tool_ids:tools,question:document.getElementById("question").value.trim()})}); const body=await response.json(); if(!response.ok) throw new Error(body.error||"请求失败"); document.getElementById("status").textContent=body.status==="no_context"?body.answer:`请求完成，编号：${body.request_id}`; if(body.status==="answered"){document.getElementById("answer-text").textContent=body.answer; const sourceBox=document.getElementById("sources"); sourceBox.replaceChildren(...(body.sources||[]).map(source=>{const p=document.createElement("p");p.textContent=`[${source.citation_id}] ${source.material_title} / 切片 ${source.chunk_index}：${source.content}`;return p;})); document.getElementById("trace-link").href=`/api/ai/traces/${encodeURIComponent(body.request_id)}`; document.getElementById("answer-card").hidden=false;} } catch(error){document.getElementById("status").textContent=error.message; document.getElementById("status").classList.add("error");} finally{button.disabled=false;} });
+  const skillForm=document.getElementById("skill-form"); if(skillForm) skillForm.addEventListener("submit",async(event)=>{event.preventDefault();const data=new FormData(skillForm);const response=await fetch("/api/ai/skills/upload",{method:"POST",headers:token?{"Authorization":`Bearer ${token}`}: {},body:data});const body=await response.json();document.getElementById("skill-status").textContent=response.ok?"上传成功，刷新页面后可选择。":(body.error||"上传失败");});
+  document.getElementById("trace-link").addEventListener("click",async(event)=>{event.preventDefault();const response=await fetch(event.currentTarget.href,{headers:headers(false),credentials:"same-origin"});const body=await response.json();document.getElementById("trace-text").textContent=JSON.stringify(body.trace||body,null,2);document.getElementById("trace-card").hidden=false;});
+})();
+</script>
+{% endblock %}

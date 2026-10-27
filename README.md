@@ -51,6 +51,21 @@ curl.exe -b cookies.txt -H "Content-Type: application/json" -d '{"question":"磁
 
 模型只会收到问题和当前班级的原文切片，不会收到 Cookie、Bearer token、用户名或密码。未配置密钥、上游超时、无效引用和供应商故障都会返回通用错误，不回显密钥或供应商原始响应。
 
+## AI 工作台
+
+进入 `/ai` 可以选择三个内置应用：通用问答、知识库问答和材料总结。每个应用有自己的模型参数和提示词模板，也可以选择内置 Skill、教师上传的声明式 Skill 和已注册工具。教师可上传 `.json`、`.md` 或 `.txt` Skill；Skill 只保存说明、动作和允许的工具，不执行其中的 Python、Shell 或 JavaScript。
+
+AI 工作台每次请求都会生成 `request_id`，并可在页面查看调用详情。trace 会记录实际的模型、温度、最大 token 数、渲染后的 messages、知识库命中的 chunk、Skill 摘要、工具 schema、工具参数、工具结果和最终响应。知识库应用只把当前班级命中的最多 4 个片段放进上下文，不会把整个知识库发送给模型；无命中时不调用模型。审计记录会脱敏 Authorization、Cookie、密码、Token 和 API Key。
+
+工具注册接口支持内置 `knowledge_search` 和教师配置的 MCP endpoint。模型返回工具调用后，服务端只执行已注册工具，检查工具名称和 JSON 参数，再把结果作为 `tool` 消息回填。MCP 未配置或调用失败时返回通用 503，不回显上游响应。
+
+```powershell
+# 登录后打开工作台
+Start-Process http://localhost:8080/ai
+# 查看一次请求的脱敏详情
+curl.exe -b cookies.txt http://localhost:8080/api/ai/traces/<request_id>
+```
+
 ## Bearer token 演示
 
 除兼容 HTML 页面的 signed-cookie session 外，项目提供短期的 HS256 Bearer token，用于 API 客户端和浏览器 Network 面板演示：
@@ -100,7 +115,7 @@ pytest -q
 OpenSpec 规约校验（归档前已执行，安装 `@fission-ai/openspec` 后可在归档前的 change 目录执行）：
 
 ```powershell
-openspec validate add-class-knowledge-qa --strict
+openspec validate add-ai-workbench-capabilities --strict
 ```
 
-第四课活动 change 为 `add-class-knowledge-qa`，描述和实现任务在 `openspec/changes/add-class-knowledge-qa/`；上一课四件套已归档在 `openspec/changes/archive/2026-09-23-add-auth-rbac-class-knowledge/`。验收证据见 `evidence/verification.md`。
+本次 AI 工作台 change 为 `add-ai-workbench-capabilities`，描述和实现任务在 `openspec/changes/add-ai-workbench-capabilities/`；知识库问答 change 为 `add-class-knowledge-qa`。上一课四件套已归档在 `openspec/changes/archive/2026-09-23-add-auth-rbac-class-knowledge/`。验收证据见 `evidence/verification.md`。
