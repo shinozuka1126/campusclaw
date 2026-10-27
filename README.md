@@ -40,6 +40,7 @@ curl.exe -b cookies.txt "http://localhost:8080/api/knowledge/search?q=项目&lim
 DEEPSEEK_API_KEY=你的本机密钥
 DEEPSEEK_MODEL=deepseek-chat
 DEEPSEEK_BASE_URL=https://api.deepseek.com/chat/completions
+DEEPSEEK_TIMEOUT=60
 ```
 
 也可以使用已登录会话直接调用接口：

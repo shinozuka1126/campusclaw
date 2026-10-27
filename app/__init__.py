@@ -30,7 +30,7 @@ def create_app(test_config: dict | None = None) -> Flask:
             DEEPSEEK_BASE_URL=os.environ.get(
                 "DEEPSEEK_BASE_URL", "https://api.deepseek.com/chat/completions"
             ),
-            DEEPSEEK_TIMEOUT=20,
+            DEEPSEEK_TIMEOUT=float(os.environ.get("DEEPSEEK_TIMEOUT", "60")),
         )
     else:
         app.config.from_mapping(
